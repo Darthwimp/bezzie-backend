@@ -46,10 +46,41 @@ async def send_message(request: QueryRequest):
                 {"role": "user", "content": user_query}
             ]
         )
-        
         return {"response": response.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+class ChatRequest(BaseModel):
+    chat_history: str
+
+@app.post("/analyze-mental-state")
+async def analyze_chat(request: ChatRequest):
+    try:
+        prompt = f"""
+        Analyze the following chat between a user and a chatbot. Identify the user's mental state based on the text, emotions, and recurring themes.
+        - Summarize the user's mental state in at most **50 bullet points**.
+        - Be concise but comprehensive.
+        - Avoid assumptions that are not evident from the chat.
+        - Identify any stress, anxiety, happiness, or other emotions reflected in the chat.
+        - If the chat suggests any urgent psychological concerns, note them without diagnosing.
+        - do not repeat the same point in different words.
+
+        Chat History:
+        {request.chat_history}
+
+        Now, provide the analysis in bullet points:
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "developer", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1024
+        )
+        print(response.choices[0].message.content)
+        return {"summary": response.choices[0].message.content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
     
 if __name__ == "__main__":
     
