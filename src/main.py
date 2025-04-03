@@ -1,4 +1,5 @@
 from email import message
+from re import search
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
@@ -10,27 +11,29 @@ from pinecone import Pinecone, ServerlessSpec
 
 
 load_dotenv()
-
 app = FastAPI()
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 pinecone = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-
 index_name = "bezzie-index"
-
+index_name = "bezzie-test-index"
 def create_index():
     if not pinecone.has_index(index_name):
         pinecone.create_index(
             name=index_name,
             metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="eu-west-1"),
+            dimension=1536,
+            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             tags={
                 "environment": "development"
             }
         )
-
+    else:
+        return pinecone.describe_index(name=index_name)
+indexRes = create_index()
+index_host = indexRes.index.host
 
 class QueryRequest(BaseModel):
     query: str
@@ -68,10 +71,38 @@ async def send_message(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 class ChatRequest(BaseModel):
+    id:str
     chat_history: str
 
 @app.post("/analyze-mental-state")
 async def analyze_chat(request: ChatRequest):
+    def findMostSimilarUser(input_text,vector_id):
+        res = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=input_text,
+            dimensions=1536,
+            encoding_format='float'
+        )
+        index=pinecone.Index(host=index_host)
+        index.upsert([
+        {
+            "id": vector_id, 
+            "values": res.data[0].embedding,  
+        }
+        ])
+        search_vector = res.data[0].embedding
+        search_results = index.query(
+            vector=search_vector,
+            top_k=2,
+            include_values=False,
+        )
+        most_similar_id = None
+        for match in search_results["matches"]:
+            if match["id"] != vector_id:  # Exclude itself
+                most_similar_id = match["id"]
+                break
+            
+        return most_similar_id
     try:
         prompt = f"""
         Analyze the following chat between a user and a chatbot. Identify the user's mental state based on the text, emotions, and recurring themes.
@@ -94,9 +125,11 @@ async def analyze_chat(request: ChatRequest):
             temperature=0.7,
             max_tokens=1024
         )
-        
-        
-        return {"summary": response.choices[0].message.content}
+        most_similar_user = findMostSimilarUser(response.choices[0].message.content,request.id)
+        return {
+                # "summary": response.choices[0].message.content,  //commented out summary as it was of no use
+                "most_similar_user": most_similar_user,
+                }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
     
