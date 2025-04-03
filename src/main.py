@@ -2,9 +2,11 @@ from email import message
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+from pinecone.enums import metric
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
+from pinecone import Pinecone, ServerlessSpec
 
 
 load_dotenv()
@@ -14,6 +16,21 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+pinecone = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+
+index_name = "bezzie-index"
+
+def create_index():
+    if not pinecone.has_index(index_name):
+        pinecone.create_index(
+            name=index_name,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="eu-west-1"),
+            tags={
+                "environment": "development"
+            }
+        )
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -77,7 +94,8 @@ async def analyze_chat(request: ChatRequest):
             temperature=0.7,
             max_tokens=1024
         )
-        print(response.choices[0].message.content)
+        
+        
         return {"summary": response.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)}")
